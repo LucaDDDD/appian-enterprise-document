@@ -400,8 +400,8 @@ def main():
     if len(sys.argv) < 2:
         print("Uso: python appian_enterprise_document.py <cartella_export_appian> [output.xlsx]")
         print("\nEsempio:")
-        print("  python appian_enterprise_document.py './DG Working Area'")
-        print("  python appian_enterprise_document.py './DG Working Area' 'enterprise_doc.xlsx'")
+        print("  python appian_enterprise_document.py './export'")
+        print("  python appian_enterprise_document.py './export' 'enterprise_doc.xlsx'")
         sys.exit(1)
     
     export_path = sys.argv[1]
