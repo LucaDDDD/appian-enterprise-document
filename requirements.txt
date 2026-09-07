@@ -1,0 +1,5 @@
+# Interfaccia web (app.py, app_uml.py, appian_toolkit*.py)
+streamlit>=1.30
+
+# Generazione del file Excel (appian_enterprise_document.py)
+openpyxl>=3.1

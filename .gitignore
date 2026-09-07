@@ -1,0 +1,20 @@
+# Virtualenv
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# macOS
+.DS_Store
+__MACOSX/
+._*
+
+# Export Appian e output generati (dati di progetto: non vanno nel repo)
+DG Working Area/
+*.zip
+*.xlsx
+*.dbml
