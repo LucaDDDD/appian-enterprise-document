@@ -14,23 +14,47 @@ Tutto gira in locale: nessuna chiamata di rete, nessuna credenziale Appian richi
 
 ## Requisiti
 
-- Python **3.9+** (testato su 3.9.6, macOS)
+- Python **3.9+** (testato su 3.9.6)
 - Le dipendenze in [`requirements.txt`](requirements.txt): `streamlit` (interfaccia web) e `openpyxl` (generazione Excel)
 
-### Installazione
+### Installazione — Windows
+
+Su Windows il comando è `py` (o `python`): **`python3` non esiste**, è la convenzione macOS/Linux.
+
+```powershell
+git clone https://github.com/LucaDDDD/appian-enterprise-document.git
+cd appian-enterprise-document
+
+py -m venv .venv
+.venv\Scripts\Activate.ps1        # PowerShell   |   cmd: .venv\Scripts\activate.bat
+pip install -r requirements.txt
+```
+
+### Installazione — macOS / Linux
 
 ```bash
 git clone https://github.com/LucaDDDD/appian-enterprise-document.git
 cd appian-enterprise-document
 
 python3 -m venv .venv
-source .venv/bin/activate          # su Windows: .venv\Scripts\activate
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+### Se qualcosa non parte
+
+| Sintomo | Causa e rimedio |
+|---|---|
+| `python3` non trovato (Windows) | Normale: usa `py` al suo posto. Tutti i comandi `python3 ...` di questo README diventano `py ...` |
+| Anche `py` non è trovato | Python non è installato. Installalo da [python.org](https://www.python.org/downloads/) spuntando **"Add python.exe to PATH"**, oppure `winget install Python.Python.3.12`. Poi riapri il terminale |
+| `python` apre il Microsoft Store | È l'alias segnaposto di Windows. Impostazioni → App → Impostazioni avanzate app → Alias di esecuzione app → disattiva `python.exe` e `python3.exe`. In alternativa usa direttamente `py` |
+| `Activate.ps1 ... non è possibile caricare lo script` | Criteri di esecuzione di PowerShell. Nella stessa finestra: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`, poi riprova ad attivare |
+| `streamlit` non trovato dopo l'install | L'ambiente non è attivo (manca `(.venv)` a inizio riga) oppure lancialo come `py -m streamlit run appian_toolkit.py` |
+
 > **Nota:** se nella tua copia locale esiste già una cartella `.venv/` proveniente da uno zip,
-> è probabilmente inservibile (l'archiviazione trasforma i symlink di `bin/python` in file di testo).
-> In quel caso cancellala e ricreala con i comandi qui sopra.
+> è inservibile: l'archiviazione trasforma i symlink di `bin/python` in file di testo, e un venv
+> creato su un sistema operativo non funziona comunque su un altro. Cancellala e ricreala con i
+> comandi qui sopra.
 
 ---
 
@@ -41,6 +65,9 @@ pip install -r requirements.txt
 ```bash
 streamlit run appian_toolkit.py
 ```
+
+Se `streamlit` non viene riconosciuto come comando, lancialo come modulo:
+`py -m streamlit run appian_toolkit.py` (Windows) oppure `python3 -m streamlit run appian_toolkit.py`.
 
 Si apre il browser su `http://localhost:8501`. Nella sidebar scegli lo strumento,
 carichi lo **ZIP dell'export Appian** (quello scaricato da Appian Designer, senza scompattarlo)
@@ -57,8 +84,13 @@ streamlit run appian_toolkit_dark.py
 Le CLI lavorano su una **cartella già estratta**, non sullo ZIP. Scompatta prima l'export:
 
 ```bash
-unzip "DG Working Area 2.zip" -d export/
+unzip "DG Working Area 2.zip" -d export/                              # macOS / Linux
 ```
+```powershell
+Expand-Archive "DG Working Area 2.zip" -DestinationPath export\       # Windows PowerShell
+```
+
+Negli esempi che seguono, su Windows sostituisci `python` con `py` se il comando non viene trovato.
 
 **Enterprise Document (Excel):**
 
