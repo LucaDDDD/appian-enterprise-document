@@ -8,7 +8,7 @@ import zipfile
 import os
 from pathlib import Path
 
-from appian_enterprise_document import scan_appian_export, create_excel
+from appian_enterprise_document import scan_appian_export_with_stats, create_excel, format_coverage
 from appian_record_uml import scan_record_types
 
 # ============================================
@@ -174,7 +174,7 @@ if page == "📄 Enterprise Document":
                     export_folder = find_appian_export_folder(extract_path)
                     
                     progress_bar.progress(30, text="Scansione oggetti...")
-                    objects = scan_appian_export(export_folder)
+                    objects, stats = scan_appian_export_with_stats(export_folder, verbose=False)
                     
                     progress_bar.progress(70, text="Generazione Excel...")
                     
@@ -203,6 +203,21 @@ if page == "📄 Enterprise Document":
                         with col3:
                             most_common = max(type_counts, key=type_counts.get)
                             st.metric("Tipo Principale", most_common)
+
+                        # Controllo copertura: quanti file XML dell'export non hanno prodotto un oggetto
+                        missed = len(stats["unparsed"])
+                        if missed:
+                            st.warning(
+                                f"{missed} file su {stats['files_scanned']} non hanno prodotto un oggetto: "
+                                "potrebbero esserci tipi non gestiti."
+                            )
+                        else:
+                            st.caption(
+                                f"Copertura 100%: tutti i {stats['files_scanned']} file XML dell'export "
+                                "hanno prodotto un oggetto."
+                            )
+                        with st.expander("Dettaglio controllo copertura"):
+                            st.code(format_coverage(stats), language="text")
                         
                         # Download
                         st.download_button(

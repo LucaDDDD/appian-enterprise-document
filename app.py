@@ -8,7 +8,7 @@ import tempfile
 from pathlib import Path
 
 # Importa le funzioni dal modulo principale
-from appian_enterprise_document import scan_appian_export, create_excel
+from appian_enterprise_document import scan_appian_export_with_stats, create_excel, format_coverage
 
 
 st.set_page_config(
@@ -127,7 +127,7 @@ if st.button("Genera Enterprise Document", type="primary", use_container_width=T
                 progress_bar.progress(30, text="Scansione oggetti Appian...")
                 
                 # Scansiona l'export
-                objects = scan_appian_export(export_folder)
+                objects, stats = scan_appian_export_with_stats(export_folder, verbose=False)
                 
                 progress_bar.progress(70, text="Generazione Excel...")
                 
@@ -164,6 +164,21 @@ if st.button("Genera Enterprise Document", type="primary", use_container_width=T
                         # Trova il tipo piu comune
                         most_common = max(type_counts, key=type_counts.get)
                         st.metric("Tipo Principale", most_common)
+
+                    # Controllo copertura: quanti file XML dell'export non hanno prodotto un oggetto
+                    missed = len(stats["unparsed"])
+                    if missed:
+                        st.warning(
+                            f"{missed} file su {stats['files_scanned']} non hanno prodotto un oggetto: "
+                            "potrebbero esserci tipi non gestiti."
+                        )
+                    else:
+                        st.caption(
+                            f"Copertura 100%: tutti i {stats['files_scanned']} file XML dell'export "
+                            "hanno prodotto un oggetto."
+                        )
+                    with st.expander("Dettaglio controllo copertura"):
+                        st.code(format_coverage(stats), language="text")
                     
                     # Dettaglio per tipo
                     st.subheader("Riepilogo per tipo")

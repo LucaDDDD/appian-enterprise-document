@@ -63,36 +63,76 @@ def get_name_from_stringmap(element):
     return ""
 
 
+# Tag XML dell'oggetto -> etichetta leggibile.
+# I nomi variano tra le versioni di Appian: teniamo entrambe le varianti note
+# (es. decision/decisionTable, integration/outboundIntegration).
+CONTENT_TYPES = {
+    "rule": "Expression Rule",
+    "interface": "Interface",
+    "constant": "Constant",
+    "rulesFolder": "Rules Folder",
+    "document": "Document",
+    "folder": "Folder",
+    "documentFolder": "Document Folder",
+    "integration": "Integration",
+    "outboundIntegration": "Integration",
+    "decision": "Decision",
+    "decisionTable": "Decision",
+    "report": "Report",
+    "communityKnowledgeCenter": "Knowledge Center",
+    "portal": "Portal",
+    "processModelFolder": "Process Model Folder",
+}
+
+# Figli di contentHaul che sono metadati dell'export, non l'oggetto vero e proprio.
+WRAPPER_CHILDREN = {"history", "roleMap", "versionUuid", "typedValue", "file"}
+
+
+def local_tag(element):
+    """Nome del tag senza namespace."""
+    return element.tag.split("}")[-1] if "}" in element.tag else element.tag
+
+
+def prettify_tag(tag):
+    """camelCase -> 'Camel Case', per i tipi non ancora mappati."""
+    out = tag[:1].upper()
+    for ch in tag[1:]:
+        out += f" {ch}" if ch.isupper() else ch
+    return out
+
+
 def parse_content_file(file_path):
     """
-    Parsa un file XML dalla cartella content.
-    Può contenere: rule, interface, constant, rulesFolder, document, folder
+    Parsa un file XML dalla cartella content (o da qualsiasi cartella *Haul).
+
+    L'oggetto è il figlio diretto della radice che non è un metadato di export.
+    I tipi ignoti non vengono scartati: il tag stesso diventa l'etichetta, così
+    l'inventario non perde oggetti quando Appian ne introduce di nuovi.
     """
     try:
         tree = ET.parse(file_path)
         root = tree.getroot()
-        
-        # Determina il tipo di contenuto
-        content_types = [
-            ('rule', 'Expression Rule'),
-            ('interface', 'Interface'),
-            ('constant', 'Constant'),
-            ('rulesFolder', 'Rules Folder'),
-            ('document', 'Document'),
-            ('folder', 'Folder'),
-            ('documentFolder', 'Document Folder'),
-            ('integration', 'Integration'),
-            ('decisionTable', 'Decision Table'),
-            ('portal', 'Portal'),
-        ]
-        
-        for tag, obj_type in content_types:
+
+        # Caso normale: <contentHaul><constant>...</constant><history/>...</contentHaul>
+        for child in root:
+            tag = local_tag(child)
+            if tag in WRAPPER_CHILDREN:
+                continue
+            obj_type = CONTENT_TYPES.get(tag, prettify_tag(tag))
+            name = get_text(child, "name")
+            description = get_text(child, "description")
+            if name:
+                return {"name": name, "description": description, "type": obj_type}
+
+        # Fallback per layout diversi: cerca il tag noto ovunque nell'albero
+        for tag, obj_type in CONTENT_TYPES.items():
             element = root.find(f".//{tag}")
             if element is not None:
                 name = get_text(element, "name")
                 description = get_text(element, "description")
-                return {"name": name, "description": description, "type": obj_type}
-        
+                if name:
+                    return {"name": name, "description": description, "type": obj_type}
+
         return None
     except Exception as e:
         print(f"  Errore parsing {file_path}: {e}")
@@ -293,60 +333,140 @@ def parse_application_file(file_path):
         return None
 
 
-def scan_appian_export(export_path):
-    """Scansiona l'intera cartella di export Appian."""
+# Cartelle note dell'export -> (parser, etichetta). Le altre vengono comunque
+# attraversate dallo scanner con il parser generico.
+FOLDER_PARSERS = [
+    ("application", parse_application_file, "Application"),
+    ("connectedSystem", parse_connected_system_file, "Connected System"),
+    ("content", parse_content_file, "Content"),
+    ("dataStore", parse_data_store_file, "Data Store"),
+    ("datatype", parse_datatype_file, "Data Type"),
+    ("group", parse_group_file, "Group"),
+    ("processModel", parse_process_model_file, "Process Model"),
+    ("recordType", parse_record_type_file, "Record Type"),
+    ("site", parse_site_file, "Site"),
+    ("webApi", parse_web_api_file, "Web API"),
+]
+
+# Cartelle di servizio dell'archivio, non contengono oggetti dell'applicazione.
+SKIP_FOLDERS = {"META-INF", "__MACOSX"}
+
+
+def scan_appian_export_with_stats(export_path, verbose=True):
+    """
+    Scansiona l'export e restituisce (oggetti, statistiche).
+
+    Attraversa *tutte* le cartelle dell'export, non solo quelle note: le cartelle
+    non mappate vengono lette con il parser generico. Le statistiche riportano
+    quanti file XML sono stati esaminati e quali non hanno prodotto un oggetto,
+    così un tipo non gestito si vede subito invece di sparire in silenzio.
+    """
     export_path = Path(export_path)
     all_objects = []
-    
-    print("\nScansione export Appian in corso...\n")
-    
-    # Mappatura cartelle -> parser
-    folder_parsers = [
-        ("application", parse_application_file, "Application"),
-        ("connectedSystem", parse_connected_system_file, "Connected System"),
-        ("content", parse_content_file, "Content"),
-        ("dataStore", parse_data_store_file, "Data Store"),
-        ("datatype", parse_datatype_file, "Data Type"),
-        ("group", parse_group_file, "Group"),
-        ("processModel", parse_process_model_file, "Process Model"),
-        ("recordType", parse_record_type_file, "Record Type"),
-        ("site", parse_site_file, "Site"),
-        ("webApi", parse_web_api_file, "Web API"),
-    ]
-    
-    for folder_name, parser_func, display_name in folder_parsers:
+    scanned = 0
+    unparsed = []
+
+    if verbose:
+        print("\nScansione export Appian in corso...\n")
+
+    parsers = {name: func for name, func, _ in FOLDER_PARSERS}
+    labels = {name: label for name, _, label in FOLDER_PARSERS}
+
+    # Cartelle note prima (ordine stabile), poi tutte le altre presenti
+    known = [name for name, _, _ in FOLDER_PARSERS]
+    extra = sorted(
+        d.name for d in export_path.iterdir()
+        if d.is_dir() and d.name not in known and d.name not in SKIP_FOLDERS
+    )
+
+    for folder_name in known + extra:
         folder = export_path / folder_name
-        if folder.exists():
-            count = 0
-            for file_path in folder.iterdir():
-                # Ignora file metadata macOS (iniziano con ._)
-                if file_path.name.startswith('._'):
-                    continue
-                if file_path.suffix.lower() in ['.xml', '.xsd']:
-                    result = parser_func(file_path)
-                    if result and result.get("name"):
-                        all_objects.append(result)
-                        count += 1
-            print(f"  [OK] {display_name}: {count} oggetti trovati")
-        else:
-            print(f"  [--] {display_name}: cartella non presente")
-    
-    # Cartelle aggiuntive (potrebbero esistere in altri export)
-    additional_folders = ["integration", "portal", "decisionTable", "processModelFolder"]
-    for folder_name in additional_folders:
-        folder = export_path / folder_name
-        if folder.exists() and any(folder.iterdir()):
-            print(f"{folder_name}: presente (parsing generico)")
-            for file_path in folder.iterdir():
-                # Ignora file metadata macOS
-                if file_path.name.startswith('._'):
-                    continue
-                if file_path.suffix.lower() == '.xml':
-                    result = parse_content_file(file_path)  # Usa parser generico
-                    if result and result.get("name"):
-                        all_objects.append(result)
-    
-    return all_objects
+        label = labels.get(folder_name, folder_name)
+
+        if not folder.exists():
+            if verbose:
+                print(f"  [--] {label}: cartella non presente")
+            continue
+
+        parser_func = parsers.get(folder_name, parse_content_file)
+        count = 0
+        missed = 0
+
+        for file_path in sorted(folder.iterdir()):
+            if file_path.name.startswith("._"):
+                continue
+            if file_path.suffix.lower() not in (".xml", ".xsd"):
+                continue
+
+            scanned += 1
+            result = parser_func(file_path)
+            if result and result.get("name"):
+                all_objects.append(result)
+                count += 1
+            else:
+                missed += 1
+                unparsed.append({
+                    "folder": folder_name,
+                    "file": file_path.name,
+                    "tags": describe_file(file_path),
+                })
+
+        if verbose:
+            suffix = f"  ({missed} non riconosciuti)" if missed else ""
+            note = "" if folder_name in labels else "  [cartella non mappata]"
+            print(f"  [OK] {label}: {count} oggetti trovati{suffix}{note}")
+
+    stats = {
+        "files_scanned": scanned,
+        "objects_found": len(all_objects),
+        "unparsed": unparsed,
+    }
+    return all_objects, stats
+
+
+def describe_file(file_path):
+    """Tag dei figli non-metadato di un file, per capire cosa non è stato riconosciuto."""
+    try:
+        root = ET.parse(file_path).getroot()
+    except Exception as e:
+        return f"<illeggibile: {type(e).__name__}>"
+    tags = [local_tag(c) for c in root if local_tag(c) not in WRAPPER_CHILDREN]
+    return ", ".join(tags) if tags else f"<{local_tag(root)} senza oggetto>"
+
+
+def scan_appian_export(export_path):
+    """Scansiona l'export e restituisce la lista degli oggetti."""
+    objects, _ = scan_appian_export_with_stats(export_path)
+    return objects
+
+
+def format_coverage(stats):
+    """Riepilogo testuale del controllo di copertura."""
+    lines = []
+    scanned = stats["files_scanned"]
+    found = stats["objects_found"]
+    unparsed = stats["unparsed"]
+
+    lines.append(f"File XML esaminati:  {scanned}")
+    lines.append(f"Oggetti riconosciuti: {found}")
+
+    if not unparsed:
+        lines.append("Copertura: 100% - nessun file scartato.")
+        return "\n".join(lines)
+
+    pct = 100.0 * found / scanned if scanned else 0.0
+    lines.append(f"Copertura: {pct:.1f}% - {len(unparsed)} file senza oggetto:")
+
+    by_tag = {}
+    for item in unparsed:
+        by_tag.setdefault((item["folder"], item["tags"]), []).append(item["file"])
+    for (folder, tags), files in sorted(by_tag.items()):
+        lines.append(f"  {len(files):4}  {folder}/  ->  {tags}")
+        for f in files[:3]:
+            lines.append(f"          {f}")
+        if len(files) > 3:
+            lines.append(f"          ... e altri {len(files) - 3}")
+    return "\n".join(lines)
 
 
 def create_excel(objects, output_path, app_name="Appian Application"):
@@ -418,7 +538,7 @@ def main():
         output_file = f"{folder_name}_Enterprise_Document.xlsx"
     
     # Scansiona e crea Excel
-    objects = scan_appian_export(export_path)
+    objects, stats = scan_appian_export_with_stats(export_path)
     
     if objects:
         print(f"\nTotale oggetti trovati: {len(objects)}")
@@ -433,8 +553,13 @@ def main():
         
         for t, count in sorted(type_counts.items()):
             print(f"   {t}: {count}")
+        
+        # Controllo di copertura
+        print("\nControllo copertura:")
+        print(format_coverage(stats))
     else:
         print("\nNessun oggetto trovato nell'export")
+        print(format_coverage(stats))
 
 
 if __name__ == "__main__":
